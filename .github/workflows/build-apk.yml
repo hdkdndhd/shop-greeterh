@@ -2,9 +2,15 @@ name: Build Signed APK
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: ["Deploy GitHub Pages"]
-    types: [completed]
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'manifest.json'
+      - 'sw.js'
+      - 'icon-192.png'
+      - 'icon-512.png'
+      - '.github/workflows/build-apk.yml'
 
 permissions:
   contents: write
@@ -16,7 +22,6 @@ env:
 
 jobs:
   build-apk:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main
