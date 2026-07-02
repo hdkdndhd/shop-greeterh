@@ -146,7 +146,7 @@
   <footer>
     <div id="statusText">Shuru karne ke liye tap karein</div>
     <div class="controls">
-      <button id="testBtn" title="Test beep" aria-label="Test beep">
+      <button id="testBtn" title="Test awaaz" aria-label="Test awaaz">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 6l7-4v20l-7-4H4a1 1 0 01-1-1V11a1 1 0 011-1h5z"/><path d="M17.5 8.5a5 5 0 010 7"/></svg>
       </button>
       <button id="toggleBtn" aria-label="Start / Stop">
@@ -192,44 +192,50 @@
   let personPresent = false;
   let secondGreetTimer = null;
 
-  let audioCtx = null;
+  const GREETING_TEXT = 'Namaste! Aapka swagat hai.';
+  let hindiVoice = null;
 
   function setStatus(msg){ statusText.textContent = msg; }
 
-  function ensureAudioCtx(){
-    if (!audioCtx){
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      audioCtx = new Ctx();
-    }
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-    return audioCtx;
+  function pickHindiVoice(){
+    if (!('speechSynthesis' in window)) return;
+    const voices = window.speechSynthesis.getVoices();
+    hindiVoice = voices.find(v => v.lang === 'hi-IN')
+      || voices.find(v => v.lang && v.lang.toLowerCase().startsWith('hi'))
+      || null;
   }
 
-  // Short two-tone beep generated purely with the Web Audio API oscillator.
+  if ('speechSynthesis' in window){
+    pickHindiVoice();
+    window.speechSynthesis.onvoiceschanged = pickHindiVoice;
+  }
+
+  // Warm-up call so mobile browsers treat later, gesture-less speak() calls
+  // (fired from the detection loop) as already-unlocked audio output.
+  function warmUpSpeech(){
+    if (!('speechSynthesis' in window)) return;
+    try{
+      const warm = new SpeechSynthesisUtterance(' ');
+      warm.volume = 0;
+      window.speechSynthesis.speak(warm);
+    }catch(err){ console.warn('speech warm-up failed', err); }
+  }
+
+  // Spoken Hindi greeting via the device's built-in Text-to-Speech engine —
+  // no audio file, works offline once the language voice is installed.
   function playGreeting(loud){
-    const ctx = ensureAudioCtx();
-    const now = ctx.currentTime;
-    const peakGain = loud ? 0.9 : 0.28;
-    const notes = [880, 1175]; // pleasant rising chime
-
-    notes.forEach((freq, i) => {
-      const start = now + i * 0.16;
-      const dur = 0.16;
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq, start);
-
-      gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(peakGain, start + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(start);
-      osc.stop(start + dur + 0.02);
-    });
+    if (!('speechSynthesis' in window)){
+      console.warn('SpeechSynthesis not supported on this browser');
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(GREETING_TEXT);
+    utter.lang = 'hi-IN';
+    if (hindiVoice) utter.voice = hindiVoice;
+    utter.rate = 0.95;
+    utter.pitch = 1.0;
+    utter.volume = loud ? 1.0 : 0.55;
+    window.speechSynthesis.speak(utter);
   }
 
   function setDetectPill(state){
@@ -251,14 +257,14 @@
     personPresent = true;
     setDetectPill('present');
     playGreeting(false);
-    setStatus('Naya vyakti aaya — swagat baja diya');
+    setStatus('Naya vyakti aaya — Namaste bol diya');
 
     secondGreetTimer = setTimeout(() => {
       secondGreetTimer = null;
       if (personPresent){
         playGreeting(true);
         setDetectPill('greeted');
-        setStatus('Vyakti abhi bhi hai — dobara (loud) swagat baja diya');
+        setStatus('Vyakti abhi bhi hai — dobara (loud) Namaste bola');
       }
     }, SECOND_GREETING_DELAY_MS);
   }
@@ -311,7 +317,7 @@
   async function start(){
     toggleBtn.disabled = true;
     try{
-      ensureAudioCtx();
+      warmUpSpeech();
       setStatus('Camera permission maang rahe hain...');
       await startCamera();
       placeholder.style.display = 'none';
@@ -354,7 +360,7 @@
   }
 
   toggleBtn.addEventListener('click', () => { running ? stop() : start(); });
-  testBtn.addEventListener('click', () => { ensureAudioCtx(); playGreeting(false); });
+  testBtn.addEventListener('click', () => { playGreeting(false); });
 
   if ('serviceWorker' in navigator){
     window.addEventListener('load', () => {
