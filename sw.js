@@ -1,4 +1,4 @@
-const CACHE_NAME = 'shop-greeter-v1';
+const CACHE_NAME = 'shop-greeter-v2';
 
 const APP_SHELL = [
   './',
@@ -37,7 +37,9 @@ self.addEventListener('fetch', (event) => {
 
       return fetch(req)
         .then((res) => {
-          if (res && res.status === 200) {
+          // Opaque (no-cors) responses, e.g. the CDN <script> tags, report
+          // status 0 but are still cacheable and needed for offline use.
+          if (res && (res.status === 200 || res.type === 'opaque')) {
             const copy = res.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
           }
