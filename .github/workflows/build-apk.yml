@@ -1,0 +1,134 @@
+name: Build Signed APK
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Deploy GitHub Pages"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+env:
+  PWA_URL: https://hdkdndhd.github.io/shop-greeterh
+  KEYSTORE_PASSWORD: ShopGreeter@2026
+  KEY_PASSWORD: ShopGreeter@2026
+
+jobs:
+  build-apk:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses and install packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2" > /dev/null
+
+      - name: Install Bubblewrap CLI
+        run: npm install -g @bubblewrap/cli
+
+      - name: Point Bubblewrap at the pre-installed JDK/SDK
+        run: |
+          mkdir -p "$HOME/.bubblewrap"
+          printf '{"jdkPath":"%s","androidSdkPath":"%s"}' "$JAVA_HOME" "$ANDROID_HOME" > "$HOME/.bubblewrap/config.json"
+          cat "$HOME/.bubblewrap/config.json"
+
+      - name: Wait for Pages to be reachable
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$PWA_URL/manifest.json")
+            echo "attempt $i: HTTP $code"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 10
+          done
+          echo "Pages site did not become reachable in time" >&2
+          exit 1
+
+      - name: Generate signing keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore android.keystore \
+            -alias shopgreeter \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
+            -dname "CN=Shop Greeter, OU=Dev, O=ShopGreeterh, L=NewDelhi, ST=Delhi, C=IN"
+
+      - name: Write twa-manifest.json
+        run: |
+          cat > twa-manifest.json <<EOF
+          {
+            "packageId": "com.shopgreeterh.app",
+            "host": "hdkdndhd.github.io",
+            "name": "Shop Greeter - Person Detector",
+            "launcherName": "ShopGreeter",
+            "display": "standalone",
+            "themeColor": "#0b0f14",
+            "themeColorDark": "#0b0f14",
+            "navigationColor": "#0b0f14",
+            "navigationColorDark": "#0b0f14",
+            "backgroundColor": "#0b0f14",
+            "enableNotifications": false,
+            "startUrl": "/shop-greeterh/index.html",
+            "iconUrl": "$PWA_URL/icon-512.png",
+            "maskableIconUrl": "$PWA_URL/icon-512.png",
+            "splashScreenFadeOutDuration": 300,
+            "signingKey": {
+              "path": "./android.keystore",
+              "alias": "shopgreeter"
+            },
+            "appVersion": "1.0.0",
+            "appVersionCode": 1,
+            "webManifestUrl": "$PWA_URL/manifest.json",
+            "fallbackType": "customtabs",
+            "orientation": "portrait",
+            "minSdkVersion": 21
+          }
+          EOF
+          cat twa-manifest.json
+
+      - name: Build and sign APK
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ env.KEYSTORE_PASSWORD }}
+          BUBBLEWRAP_KEY_PASSWORD: ${{ env.KEY_PASSWORD }}
+        run: |
+          yes '' | bubblewrap build --skipPwaValidation
+
+      - name: Commit APK back to the repository
+        run: |
+          mkdir -p apk
+          cp app-release-signed.apk "apk/shop-greeter.apk"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add apk/shop-greeter.apk
+          if git diff --cached --quiet; then
+            echo "APK unchanged, nothing to commit"
+          else
+            git commit -m "Add signed Shop Greeter APK [skip ci]"
+            git push origin HEAD:main
+          fi
+
+      - name: Upload APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shop-greeter-apk
+          path: app-release-signed.apk
